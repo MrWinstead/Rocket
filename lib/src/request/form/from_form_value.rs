@@ -141,8 +141,12 @@ pub trait FromFormValue<'v>: Sized {
     type Error;
 
     /// Parses an instance of `Self` from an HTTP form field value or returns an
-    /// `Error` if one cannot be parsed.
-    fn from_form_value(form_value: &'v str) -> Result<Self, Self::Error>;
+    /// `Error` if one cannot be parsed. The `self` parameter may be none, but it
+    /// can be used for container or complex types to keep track of themselves as
+    /// they mutate with form values. If `self` is None, this function should
+    /// return an instance of the struct being parsed which will be fed into
+    /// subsequent calls to this function.
+    fn from_form_value(back_reference: Option<Self>, form_value: &'v str) -> Result<Self, Self::Error>;
 
     /// Returns a default value to be used when the form field does not exist.
     /// If this returns `None`, then the field is required. Otherwise, this
@@ -157,7 +161,7 @@ impl<'v> FromFormValue<'v> for &'v str {
     type Error = Error;
 
     // This just gives the raw string.
-    fn from_form_value(v: &'v str) -> Result<Self, Self::Error> {
+    fn from_form_value(back_reference: Option<&str>, v: &'v str) -> Result<Self, Self::Error> {
         Ok(v)
     }
 }
@@ -166,7 +170,7 @@ impl<'v> FromFormValue<'v> for String {
     type Error = &'v str;
 
     // This actually parses the value according to the standard.
-    fn from_form_value(v: &'v str) -> Result<Self, Self::Error> {
+    fn from_form_value(back_reference: Option<String>, v: &'v str) -> Result<Self, Self::Error> {
         let replaced = v.replace("+", " ");
         match URI::percent_decode(replaced.as_bytes()) {
             Err(_) => Err(v),
@@ -178,7 +182,7 @@ impl<'v> FromFormValue<'v> for String {
 impl<'v> FromFormValue<'v> for bool {
     type Error = &'v str;
 
-    fn from_form_value(v: &'v str) -> Result<Self, Self::Error> {
+    fn from_form_value(back_reference: Option<bool>, v: &'v str) -> Result<Self, Self::Error> {
         match v {
             "on" | "true" => Ok(true),
             "off" | "false" => Ok(false),
@@ -195,7 +199,7 @@ macro_rules! impl_with_fromstr {
     ($($T:ident),+) => ($(
         impl<'v> FromFormValue<'v> for $T {
             type Error = &'v str;
-            fn from_form_value(v: &'v str) -> Result<Self, Self::Error> {
+            fn from_form_value(back_reference: Option<$T>, v: &'v str) -> Result<Self, Self::Error> {
                 $T::from_str(v).map_err(|_| v)
             }
         }
@@ -208,8 +212,8 @@ impl_with_fromstr!(f32, f64, isize, i8, i16, i32, i64, usize, u8, u16, u32, u64,
 impl<'v, T: FromFormValue<'v>> FromFormValue<'v> for Option<T> {
     type Error = Error;
 
-    fn from_form_value(v: &'v str) -> Result<Self, Self::Error> {
-        match T::from_form_value(v) {
+    fn from_form_value(back_reference: Option<Option<T> >, v: &'v str) -> Result<Self, Self::Error> {
+        match T::from_form_value(None, v) {
             Ok(v) => Ok(Some(v)),
             Err(_) => Ok(None),
         }
@@ -224,8 +228,8 @@ impl<'v, T: FromFormValue<'v>> FromFormValue<'v> for Option<T> {
 impl<'v, T: FromFormValue<'v>> FromFormValue<'v> for Result<T, T::Error> {
     type Error = Error;
 
-    fn from_form_value(v: &'v str) -> Result<Self, Self::Error> {
-        match T::from_form_value(v) {
+    fn from_form_value(back_reference: Option<Result<T, T::Error> >, v: &'v str) -> Result<Self, Self::Error> {
+        match T::from_form_value(None, v) {
             ok@Ok(_) => Ok(ok),
             e@Err(_) => Ok(e),
         }
@@ -235,14 +239,26 @@ impl<'v, T: FromFormValue<'v>> FromFormValue<'v> for Result<T, T::Error> {
 impl<'v, T: FromStr> FromFormValue<'v> for Vec<T> {
     type Error = &'v str;
 
-    fn from_form_value(v: &'v str) -> Result<Self, Self::Error> {
-        let mut parsed_vec: Vec<T> = Vec::new();
+    //   This trait implementation requires the back_reference argument and it'll either create an
+    // instance of itself if the back_reference is None or will extend the existing instance. The
+    // code which holds the scope of the back_reference is in codegen/src/decorators/derive_form.rs
+    // around line 180.
+    fn from_form_value(back_reference: Option<Vec<T> >, v: &'v str) -> Result<Self, Self::Error> {
         match T::from_str(v) {
+            Err(_) => Err(v),
             Ok(parsed_value) => {
-                parsed_vec.push(Some(parsed_value).unwrap());
-                Ok(parsed_vec)
-            },
-            _ => Ok(parsed_vec),
+                match back_reference {
+                    Some(mut container) => {
+                        container.push(Some(parsed_value).unwrap());
+                        Ok(container)
+                    },
+                    None => {
+                        let mut new_vector = Vec::new();
+                        new_vector.push(Some(parsed_value).unwrap());
+                        Ok(new_vector)
+                    },
+                }
+            }
         }
     }
 

@@ -178,7 +178,7 @@ fn from_form_substructure(cx: &mut ExtCtxt, trait_span: Span, substr: &Substruct
         let id_str = ident_string.as_str();
         arms.push(quote_tokens!(cx,
             $id_str => {
-                $ident = match ::rocket::request::FromFormValue::from_form_value(v) {
+                $ident = match ::rocket::request::FromFormValue::from_form_value($ident, v) {
                     Ok(v) => Some(v),
                     Err(e) => {
                         println!("    => Error parsing form val '{}': {:?}",
