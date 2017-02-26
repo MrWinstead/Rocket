@@ -232,3 +232,22 @@ impl<'v, T: FromFormValue<'v>> FromFormValue<'v> for Result<T, T::Error> {
     }
 }
 
+impl<'v, T: FromStr> FromFormValue<'v> for Vec<T> {
+    type Error = &'v str;
+
+    fn from_form_value(v: &'v str) -> Result<Self, Self::Error> {
+        let mut parsed_vec: Vec<T> = Vec::new();
+        match T::from_str(v) {
+            Ok(parsed_value) => {
+                parsed_vec.push(Some(parsed_value).unwrap());
+                Ok(parsed_vec)
+            },
+            _ => Ok(parsed_vec),
+        }
+    }
+
+    fn default() -> Option<Vec<T>> {
+        let empty_vector: Vec<T> = Vec::new();
+        Some(empty_vector)
+    }
+}
